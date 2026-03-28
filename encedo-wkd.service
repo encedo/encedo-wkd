@@ -1,0 +1,18 @@
+[Unit]
+Description=Encedo WKD Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/encedo-wkd
+ExecStart=/usr/bin/python3 /opt/encedo-wkd/server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=null
+StandardError=null
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
