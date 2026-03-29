@@ -113,8 +113,18 @@ if [ -n "$CERTS_TO_REQUEST" ]; then
         fi
     done
     
-    echo ">>> Restarting nginx..."
+    echo ">>> Restarting Carbonio..."
     su - zextras -c "zmcontrol start"
+    
+    echo ">>> Fixing certificate permissions for nginx..."
+    for SUBDOMAIN in $CERTS_TO_REQUEST; do
+        PRIVKEY_PATH="${CERTBOT_ROOT}/live/${SUBDOMAIN}/privkey.pem"
+        if [ -f "$PRIVKEY_PATH" ]; then
+            chmod 644 "$PRIVKEY_PATH"
+            chown root:zextras "$PRIVKEY_PATH" 2>/dev/null || true
+            echo "OK:   $SUBDOMAIN -- privkey permissions fixed"
+        fi
+    done
 fi
 
 # ---------------------------------------------------------------
@@ -130,6 +140,13 @@ fi
 # ---------------------------------------------------------------
 # Generate nginx config
 # ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# Start nginx first so Carbonio template regeneration happens
+# before we write our config (zmproxyctl regenerates from templates)
+# ---------------------------------------------------------------
+echo ">>> Starting nginx (template regeneration pass)..."
+su - zextras -c "zmproxyctl restart"
+
 echo ""
 echo ">>> Generating nginx config: $TARGET"
 
@@ -330,10 +347,10 @@ if [ $? -ne 0 ]; then
 fi
 
 # ---------------------------------------------------------------
-# Reload nginx
+# Reload nginx (direct reload -- no template regeneration)
 # ---------------------------------------------------------------
-echo ">>> Reloading nginx (zmproxyctl restart)..."
-su - zextras -c "zmproxyctl restart"
+echo ">>> Reloading nginx (nginx -s reload)..."
+"$NGINX_BIN" -s reload -c "$NGINX_CONF"
 
 # ---------------------------------------------------------------
 # Summary
