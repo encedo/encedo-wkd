@@ -61,6 +61,7 @@ echo ""
 echo ">>> Checking DNS and certificates..."
 
 ACTIVE_DOMAINS=""
+CERTS_TO_REQUEST=""
 
 for DOMAIN in $DOMAINS; do
     SUBDOMAIN="openpgpkey.${DOMAIN}"
@@ -78,11 +79,26 @@ for DOMAIN in $DOMAINS; do
     if [ -f "$CERTPATH" ]; then
         EXPIRY=$(openssl x509 -enddate -noout -in "$CERTPATH" 2>/dev/null | cut -d= -f2)
         echo "CERT: $SUBDOMAIN -- cert exists (expires: $EXPIRY)"
+        ACTIVE_DOMAINS="$ACTIVE_DOMAINS $DOMAIN"
     else
-        echo "NEW:  $SUBDOMAIN -- requesting Let's Encrypt cert..."
+        echo "MARK: $SUBDOMAIN -- will request cert"
+        CERTS_TO_REQUEST="$CERTS_TO_REQUEST $SUBDOMAIN"
+    fi
+done
+
+# ---------------------------------------------------------------
+# Generate missing certificates (if any)
+# ---------------------------------------------------------------
+if [ -n "$CERTS_TO_REQUEST" ]; then
+    echo ""
+    echo ">>> Stopping nginx for certificate generation..."
+    su - zextras -c "zmproxyctl stop"
+    
+    for SUBDOMAIN in $CERTS_TO_REQUEST; do
+        echo ">>> Requesting Let's Encrypt cert for $SUBDOMAIN..."
         "$CERTBOT_BIN" certonly \
-            --webroot \
-            --webroot-path "$WEBROOT" \
+            --standalone \
+            --preferred-challenges http \
             --non-interactive \
             --agree-tos \
             --email "$ADMIN_EMAIL" \
@@ -91,15 +107,16 @@ for DOMAIN in $DOMAINS; do
 
         if [ $? -eq 0 ]; then
             echo "OK:   $SUBDOMAIN -- cert generated"
+            DOMAIN=$(echo "$SUBDOMAIN" | sed 's/openpgpkey\.//')
+            ACTIVE_DOMAINS="$ACTIVE_DOMAINS $DOMAIN"
         else
             echo "FAIL: $SUBDOMAIN -- certbot failed, skipping"
-            continue
         fi
-    fi
-
-    # Domain ready for nginx config
-    ACTIVE_DOMAINS="$ACTIVE_DOMAINS $DOMAIN"
-done
+    done
+    
+    echo ">>> Restarting nginx..."
+    su - zextras -c "zmproxyctl start"
+fi
 
 # ---------------------------------------------------------------
 # Check if anything is active
