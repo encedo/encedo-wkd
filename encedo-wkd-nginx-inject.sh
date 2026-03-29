@@ -91,14 +91,13 @@ done
 # ---------------------------------------------------------------
 if [ -n "$CERTS_TO_REQUEST" ]; then
     echo ""
-    echo ">>> Stopping nginx for certificate generation..."
+    echo ">>> Stopping Carbonio for certificate generation..."
     su - zextras -c "zmcontrol stop"
     
     for SUBDOMAIN in $CERTS_TO_REQUEST; do
         echo ">>> Requesting Let's Encrypt cert for $SUBDOMAIN..."
         "$CERTBOT_BIN" certonly \
             --standalone \
-            --preferred-challenges http \
             --non-interactive \
             --agree-tos \
             --email "$ADMIN_EMAIL" \
