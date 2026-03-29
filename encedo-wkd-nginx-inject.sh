@@ -98,6 +98,7 @@ if [ -n "$CERTS_TO_REQUEST" ]; then
         echo ">>> Requesting Let's Encrypt cert for $SUBDOMAIN..."
         "$CERTBOT_BIN" certonly \
             --standalone \
+            --preferred-challenges tls-alpn-01 \
             --non-interactive \
             --agree-tos \
             --email "$ADMIN_EMAIL" \
