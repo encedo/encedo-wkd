@@ -14,6 +14,7 @@ import signal
 import socketserver
 import sys
 import threading
+import urllib.request
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -29,6 +30,41 @@ _cfg = {}
 log = logging.getLogger(__name__)
 
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _validate_carbonio_token(token: str, carbonio_url: str) -> str | None:
+    """Validate a Carbonio auth token via SOAP GetInfoRequest.
+
+    Returns the authenticated account email address on success, or None
+    if the token is invalid, expired, or the request fails.
+    """
+    soap_body = json.dumps({
+        "Header": {
+            "context": {
+                "_jsns": "urn:zimbra",
+                "authToken": {"_content": token},
+            }
+        },
+        "Body": {
+            "GetInfoRequest": {
+                "_jsns": "urn:zimbraAccount",
+                "sections": "mbox",
+            }
+        },
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{carbonio_url}/service/soap/GetInfoRequest",
+        data=soap_body,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            return data.get("Body", {}).get("GetInfoResponse", {}).get("name")
+    except Exception as exc:
+        log.warning("Carbonio token validation failed: %s", exc)
+        return None
 
 # Route patterns
 # Advanced method:  /.well-known/openpgpkey/<domain>/hu/<hash>
@@ -133,6 +169,10 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- API handlers
 
     def _handle_publish(self) -> None:
+        account = self._require_auth()
+        if account is None:
+            return
+
         body = self._read_json()
         if body is None:
             return
@@ -145,6 +185,11 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             return
         if not pubkey_b64:
             self._send_json(400, {"error": "missing pubkey_base64"})
+            return
+
+        # User may only publish their own key
+        if email != account:
+            self._send_json(403, {"error": "forbidden: email does not match authenticated account"})
             return
 
         try:
@@ -160,6 +205,10 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "hash": hash_})
 
     def _handle_revoke(self) -> None:
+        account = self._require_auth()
+        if account is None:
+            return
+
         body = self._read_json()
         if body is None:
             return
@@ -167,6 +216,11 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         email = body.get("email", "").strip().lower()
         if not EMAIL_RE.match(email):
             self._send_json(400, {"error": "invalid email"})
+            return
+
+        # User may only revoke their own key
+        if email != account:
+            self._send_json(403, {"error": "forbidden: email does not match authenticated account"})
             return
 
         local, domain = email.split("@", 1)
@@ -178,6 +232,24 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True})
 
     # ---------------------------------------------------------------- helpers
+
+    def _require_auth(self) -> str | None:
+        """Validate X-Auth-Token via Carbonio SOAP GetInfoRequest.
+
+        Returns authenticated account email on success, or sends 401 and
+        returns None on failure.
+        """
+        token = self.headers.get("X-Auth-Token", "").strip()
+        if not token:
+            self._send_json(401, {"error": "missing X-Auth-Token"})
+            return None
+
+        carbonio_url = _cfg.get("carbonio_url", "http://127.0.0.1:8080")
+        account = _validate_carbonio_token(token, carbonio_url)
+        if account is None:
+            self._send_json(401, {"error": "invalid or expired auth token"})
+            return None
+        return account
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))

@@ -323,6 +323,7 @@ WKD_CONFIG="${WKD_CONFIG_DIR}/config.json"
 WKD_CACHE_DIR="/var/encedo-wkd/cache"
 WKD_LOG_FILE="/var/log/encedo-wkd.log"
 WKD_LOG_LEVEL="INFO"
+WKD_CARBONIO_URL="http://127.0.0.1:8080"
 
 # Create directories
 mkdir -p "$WKD_CONFIG_DIR"
@@ -335,7 +336,8 @@ cat > "$WKD_CONFIG" << JSON_CONFIG
   "host": "127.0.0.1",
   "cache_dir": "${WKD_CACHE_DIR}",
   "log_file": "${WKD_LOG_FILE}",
-  "log_level": "${WKD_LOG_LEVEL}"
+  "log_level": "${WKD_LOG_LEVEL}",
+  "carbonio_url": "${WKD_CARBONIO_URL}"
 }
 JSON_CONFIG
 
