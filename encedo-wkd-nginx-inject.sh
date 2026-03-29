@@ -29,6 +29,7 @@ ADMIN_EMAIL="admin@encedo.com"
 WKD_PORT="8089"
 NGINX_BIN="/opt/zextras/common/sbin/nginx"
 NGINX_CONF="/opt/zextras/conf/nginx.conf"
+NGINX_DEFAULT_HTTPS="/opt/zextras/conf/nginx/includes/nginx.conf.web.https.default"
 
 # ---------------------------------------------------------------
 # Check privileges
@@ -138,6 +139,26 @@ if [ -z "$ACTIVE_DOMAINS" ]; then
 fi
 
 # ---------------------------------------------------------------
+# Detect Carbonio nginx IP (must match Carbonio's default_server socket)
+# ---------------------------------------------------------------
+# Carbonio binds to a specific IP (e.g. 65.21.170.222:443 default_server).
+# Our server blocks must listen on the same IP:port socket, otherwise
+# nginx will never route SNI-based connections to our blocks.
+NGINX_IP=$(grep "listen.*443 default_server" "$NGINX_DEFAULT_HTTPS" 2>/dev/null \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+
+if [ -z "$NGINX_IP" ]; then
+    echo "WARNING: Could not detect Carbonio nginx IP from $NGINX_DEFAULT_HTTPS"
+    echo "         Falling back to 0.0.0.0 (listen 443) -- SNI may not work"
+    NGINX_LISTEN_443="443 ssl"
+    NGINX_LISTEN_80="80"
+else
+    echo ">>> Detected Carbonio nginx IP: $NGINX_IP"
+    NGINX_LISTEN_443="${NGINX_IP}:443 ssl"
+    NGINX_LISTEN_80="${NGINX_IP}:80"
+fi
+
+# ---------------------------------------------------------------
 # Generate nginx config
 # ---------------------------------------------------------------
 # ---------------------------------------------------------------
@@ -160,7 +181,7 @@ cat > "$TARGET" << NGINX_HEADER
 # Port 80 -- Let's Encrypt webroot + redirect for openpgpkey.*
 # ---------------------------------------------------------------
 server {
-    listen 80;
+    listen ${NGINX_LISTEN_80};
     server_name ~^openpgpkey\..+\$;
 
     location /.well-known/acme-challenge/ {
@@ -185,7 +206,7 @@ for DOMAIN in $ACTIVE_DOMAINS; do
 # WKD: ${DOMAIN}
 # ---------------------------------------------------------------
 server {
-    listen 443 ssl;
+    listen ${NGINX_LISTEN_443};
     server_name ${SUBDOMAIN};
 
     ssl_protocols           TLSv1.2 TLSv1.3;
