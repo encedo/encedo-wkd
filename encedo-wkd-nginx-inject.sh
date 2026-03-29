@@ -92,7 +92,7 @@ done
 if [ -n "$CERTS_TO_REQUEST" ]; then
     echo ""
     echo ">>> Stopping nginx for certificate generation..."
-    su - zextras -c "zmproxyctl stop"
+    su - zextras -c "zmcontrol stop"
     
     for SUBDOMAIN in $CERTS_TO_REQUEST; do
         echo ">>> Requesting Let's Encrypt cert for $SUBDOMAIN..."
@@ -115,7 +115,7 @@ if [ -n "$CERTS_TO_REQUEST" ]; then
     done
     
     echo ">>> Restarting nginx..."
-    su - zextras -c "zmproxyctl start"
+    su - zextras -c "zmcontrol start"
 fi
 
 # ---------------------------------------------------------------
