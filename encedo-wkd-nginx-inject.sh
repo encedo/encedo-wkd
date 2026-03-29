@@ -2,13 +2,17 @@
 # encedo-wkd-nginx-inject.sh
 # Generates nginx config for WKD (openpgpkey.*) based on domains from Carbonio.
 #
+# Integrates with Carbonio's certbot (/opt/zextras/common/bin/certbot)
+# Certificates stored in: /opt/zextras/common/certbot/etc/letsencrypt/live/
+#
 # Run:
 #   - after first installation
 #   - after adding a new domain to Carbonio
 #   - after Carbonio upgrade (nginx.conf.web.https gets cleared)
+#   - after running your cert renewal script
 #
 # Requirements:
-#   - certbot installed
+#   - Carbonio certbot installed
 #   - CNAME openpgpkey.domain.tld -> mailserver.encedo.com in client DNS
 #   - encedo-wkd running on 127.0.0.1:8089
 
@@ -18,7 +22,9 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------
 TARGET="/opt/zextras/conf/nginx/includes/nginx.conf.web.https"
-WEBROOT="/var/www/certbot"
+WEBROOT="/opt/zextras/common/certbot/etc/letsencrypt/webroot"
+CERTBOT_BIN="/opt/zextras/common/bin/certbot"
+CERTBOT_ROOT="/opt/zextras/common/certbot/etc/letsencrypt"
 ADMIN_EMAIL="admin@encedo.com"
 WKD_PORT="8089"
 NGINX_BIN="/opt/zextras/common/sbin/nginx"
@@ -58,7 +64,7 @@ ACTIVE_DOMAINS=""
 
 for DOMAIN in $DOMAINS; do
     SUBDOMAIN="openpgpkey.${DOMAIN}"
-    CERTPATH="/etc/letsencrypt/live/${SUBDOMAIN}/fullchain.pem"
+    CERTPATH="${CERTBOT_ROOT}/live/${SUBDOMAIN}/fullchain.pem"
 
     # Check if CNAME resolves
     RESOLVED=$(dig +short "$SUBDOMAIN" 2>/dev/null | tail -1)
@@ -74,7 +80,7 @@ for DOMAIN in $DOMAINS; do
         echo "CERT: $SUBDOMAIN -- cert exists (expires: $EXPIRY)"
     else
         echo "NEW:  $SUBDOMAIN -- requesting Let's Encrypt cert..."
-        certbot certonly \
+        "$CERTBOT_BIN" certonly \
             --webroot \
             --webroot-path "$WEBROOT" \
             --non-interactive \
@@ -139,7 +145,7 @@ NGINX_HEADER
 COUNT=0
 for DOMAIN in $ACTIVE_DOMAINS; do
     SUBDOMAIN="openpgpkey.${DOMAIN}"
-    CERTPATH="/etc/letsencrypt/live/${SUBDOMAIN}"
+    CERTPATH="${CERTBOT_ROOT}/live/${SUBDOMAIN}"
 
     cat >> "$TARGET" << NGINX_BLOCK
 # ---------------------------------------------------------------
@@ -342,4 +348,5 @@ echo ""
 echo "  Re-run this script after:"
 echo "    - Carbonio upgrade"
 echo "    - adding a new domain"
+echo "    - cert renewal (your cert renewal script)"
 echo "-----------------------------------------------"
