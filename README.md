@@ -160,10 +160,15 @@ curl -s -X POST https://mailserver.encedo.com/wkd/api/publish \
 ### Verify key was published
 
 ```bash
-# WKD lookup — advanced method
-curl -s "https://openpgpkey.firma.pl/.well-known/openpgpkey/firma.pl/hu/<hash>?l=jan" | wc -c
+# Compute WKD hash for the local part of the email:
+python3 -c "from wkd import wkd_hash; print(wkd_hash('jan'))"
+# e.g. -> ow4s9up8g96bch3i8yqbuxmwxfzx5sfw
 
-# Or via GPG
+# WKD lookup — advanced method:
+HASH=$(python3 -c "from wkd import wkd_hash; print(wkd_hash('jan'))")
+curl -s "https://openpgpkey.firma.pl/.well-known/openpgpkey/firma.pl/hu/${HASH}?l=jan" | wc -c
+
+# Or via GPG (tries advanced then direct method automatically):
 gpg --locate-key jan@firma.pl
 
 # Online tester: https://wkd.chimbosonic.com
