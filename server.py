@@ -169,10 +169,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- API handlers
 
     def _handle_publish(self) -> None:
-        account = self._require_auth()
-        if account is None:
-            return
-
         body = self._read_json()
         if body is None:
             return
@@ -185,6 +181,10 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             return
         if not pubkey_b64:
             self._send_json(400, {"error": "missing pubkey_base64"})
+            return
+
+        account = self._require_auth(email)
+        if account is None:
             return
 
         # User may only publish their own key
@@ -205,10 +205,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "hash": hash_})
 
     def _handle_revoke(self) -> None:
-        account = self._require_auth()
-        if account is None:
-            return
-
         body = self._read_json()
         if body is None:
             return
@@ -216,6 +212,10 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         email = body.get("email", "").strip().lower()
         if not EMAIL_RE.match(email):
             self._send_json(400, {"error": "invalid email"})
+            return
+
+        account = self._require_auth(email)
+        if account is None:
             return
 
         # User may only revoke their own key
@@ -233,18 +233,25 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- helpers
 
-    def _require_auth(self) -> str | None:
+    def _require_auth(self, request_email: str = "") -> str | None:
         """Validate X-Auth-Token via Carbonio SOAP GetInfoRequest.
+
+        If carbonio_url is not set in config, auth is disabled and the
+        request_email is returned as-is (unauthenticated / local mode).
 
         Returns authenticated account email on success, or sends 401 and
         returns None on failure.
         """
+        carbonio_url = _cfg.get("carbonio_url", "").strip()
+        if not carbonio_url:
+            log.debug("auth disabled (carbonio_url not configured) — allowing request for %s", request_email)
+            return request_email
+
         token = self.headers.get("X-Auth-Token", "").strip()
         if not token:
             self._send_json(401, {"error": "missing X-Auth-Token"})
             return None
 
-        carbonio_url = _cfg.get("carbonio_url", "http://127.0.0.1:8080")
         account = _validate_carbonio_token(token, carbonio_url)
         if account is None:
             self._send_json(401, {"error": "invalid or expired auth token"})

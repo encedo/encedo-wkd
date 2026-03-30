@@ -4,5 +4,6 @@
   "cache_dir": "/var/encedo-wkd/cache",
   "log_file": "/var/log/encedo-wkd.log",
   "log_level": "INFO",
-  "carbonio_url": "http://127.0.0.1:8080"
+
+  "carbonio_url": ""
 }
