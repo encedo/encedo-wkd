@@ -16,19 +16,40 @@ Part of the **Encedo Mail** project (Phase 1).
 
 ## Install
 
+Run as **root** on the Carbonio server:
+
 ```bash
+# 1. Clone the repository
 git clone https://github.com/encedo/encedo-wkd
 cd encedo-wkd
 
-cp config.json.example /opt/encedo-wkd/config.json
-# edit /opt/encedo-wkd/config.json
+# 2. Install service, nginx extensions, systemd unit
+sudo ./install.sh
 
-mkdir -p /var/encedo-wkd/cache
-chown www-data:www-data /var/encedo-wkd/cache
+# 3. Generate nginx config + TLS certs for openpgpkey.* domains
+#    (reads domain list from Carbonio via zmprov, requests Let's Encrypt certs,
+#     writes nginx WKD server blocks, generates config.json, reloads nginx)
+sudo bash encedo-wkd-nginx-inject.sh
 
-cp encedo-wkd.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now encedo-wkd
+# 4. Start the service
+sudo systemctl start encedo-wkd
+sudo systemctl status encedo-wkd
+
+# 5. Smoke test
+curl https://openpgpkey.<your-domain>/.well-known/openpgpkey/policy
+```
+
+> **Note:** `encedo-wkd-nginx-inject.sh` must be run with `bash` (or `chmod +x` first) —
+> it uses `bash`-specific syntax (`set -euo pipefail`, process substitution).
+> Re-run it after adding a new domain or after a Carbonio upgrade.
+
+### Update existing installation
+
+```bash
+cd encedo-wkd
+git pull
+sudo ./install.sh          # updates Python files + nginx extensions + reloads nginx
+sudo systemctl restart encedo-wkd
 ```
 
 ---
