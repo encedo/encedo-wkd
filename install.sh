@@ -25,7 +25,7 @@ fi
 echo "[1/6] Creating directories..."
 mkdir -p "$WKD_DIR"
 mkdir -p "$CACHE_DIR"
-cp src/*.py "$WKD_DIR/"
+cp ./*.py "$WKD_DIR/"
 
 echo "[2/6] Installing config.json (if not present)..."
 if [ ! -f "$WKD_DIR/config.json" ]; then
