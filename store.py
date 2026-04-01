@@ -1,10 +1,15 @@
 import os
+import re
 import base64
 import logging
 
 log = logging.getLogger(__name__)
 
 _cache_dir = "/var/encedo-wkd/cache"
+
+# WKD Z-Base-32 hash is always exactly 32 chars from alphabet ybndrfg8ejkmcpqxot1uwisza345h769
+_RE_HASH   = re.compile(r'^[ybndrfg8ejkmcpqxot1uwisza345h769]{32}$')
+_RE_DOMAIN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9\-.]{0,253}$')
 
 
 def init(cache_dir: str) -> None:
@@ -14,6 +19,10 @@ def init(cache_dir: str) -> None:
 
 
 def _key_path(domain: str, hash_: str) -> str:
+    if not _RE_DOMAIN.match(domain) or '..' in domain:
+        raise ValueError(f"Invalid domain: {domain!r}")
+    if not _RE_HASH.match(hash_):
+        raise ValueError(f"Invalid WKD hash: {hash_!r}")
     return os.path.join(_cache_dir, domain, hash_)
 
 

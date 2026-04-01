@@ -147,7 +147,23 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- WKD responses
 
     def _serve_key(self, domain: str, hash_: str) -> None:
-        data = store.get_key(domain, hash_)
+        # RFC §3.1: validate that hash matches the l= query parameter if provided
+        qs = parse_qs(urlparse(self.path).query)
+        local = qs.get('l', [None])[0]
+        if local is not None:
+            expected = wkd_hash(local)
+            if expected != hash_:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+        try:
+            data = store.get_key(domain, hash_)
+        except ValueError as e:
+            log.warning("_serve_key rejected: %s", e)
+            self.send_response(400)
+            self.end_headers()
+            return
         if data is None:
             self.send_response(404)
             self.end_headers()
@@ -161,7 +177,7 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_policy(self) -> None:
         self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", "text/plain")  # RFC WKD §4.3
         self.send_header("Content-Length", "0")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
