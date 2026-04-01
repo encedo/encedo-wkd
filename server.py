@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import config as cfg
 import store
-from wkd import wkd_hash, extract_domain
+from wkd import wkd_hash, extract_domain, extract_uids
 
 VERSION = "1.0.0"
 
@@ -212,6 +212,13 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             pubkey_bytes = store.decode_pubkey(pubkey_b64)
         except Exception:
             self._send_json(400, {"error": "invalid base64"})
+            return
+
+        # Validate that the key contains a UID matching the requested email
+        uids = extract_uids(pubkey_bytes)
+        if not any(email in uid.lower() for uid in uids):
+            log.warning("publish rejected: no UID matching %s in key (uids=%r)", email, uids)
+            self._send_json(400, {"error": "key does not contain a User ID matching the requested email"})
             return
 
         local, domain = email.split("@", 1)
