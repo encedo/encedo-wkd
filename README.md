@@ -110,6 +110,20 @@ by `encedo-wkd-nginx-inject.sh`.
 
 ## API
 
+### Key validation
+
+On every publish request the server parses the submitted binary OpenPGP key and checks
+that at least one **User ID packet** (tag 13, RFC 4880 §5.11) contains the requested email
+address. The check is case-insensitive and accepts both `Name <email>` and bare `email` forms.
+
+This prevents a user from publishing a key with someone else's email (alice publishing bob's key).
+The parser handles both v4 (old-format and new-format packets) and v6 keys (new-format only, RFC 9580).
+
+Returns `400` with `{"error": "key does not contain a User ID matching the requested email"}`
+if validation fails.
+
+---
+
 ### Authentication modes
 
 **With Carbonio** (`carbonio_url` set in `config.json`):
