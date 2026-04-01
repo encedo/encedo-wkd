@@ -128,6 +128,16 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
         self._send_json(404, {"error": "not_found"})
 
+    # -------------------------------------------------------------- OPTIONS
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     # ----------------------------------------------------------------- POST
 
     def do_POST(self):
