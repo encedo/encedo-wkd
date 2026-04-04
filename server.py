@@ -288,8 +288,10 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         hash_ = wkd_hash(local)
         deleted = store.delete_key(domain, hash_)
         if not deleted:
+            log.info("revoke: key not found in WKD for %s (hash=%s) — returning 404 (expected if key was never published)", email, hash_)
             self._send_json(404, {"error": "key not found"})
             return
+        log.info("revoked key for %s (hash=%s)", email, hash_)
         self._send_json(200, {"ok": True})
 
     # ---------------------------------------------------------------- helpers
