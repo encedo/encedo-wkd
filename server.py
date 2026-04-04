@@ -38,6 +38,9 @@ def _validate_carbonio_token(token: str, carbonio_url: str) -> str | None:
     Returns the authenticated account email address on success, or None
     if the token is invalid, expired, or the request fails.
     """
+    soap_url = f"{carbonio_url}/service/soap/GetInfoRequest"
+    log.debug("token validation: POST %s (token prefix: %s…)", soap_url, token[:12] if token else "(empty)")
+
     soap_body = json.dumps({
         "Header": {
             "context": {
@@ -54,16 +57,30 @@ def _validate_carbonio_token(token: str, carbonio_url: str) -> str | None:
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        f"{carbonio_url}/service/soap/GetInfoRequest",
+        soap_url,
         data=soap_body,
         headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
-            return data.get("Body", {}).get("GetInfoResponse", {}).get("name")
+            fault = data.get("Body", {}).get("Fault")
+            if fault:
+                reason = fault.get("Reason", {}).get("Text", "unknown fault")
+                log.warning("token validation: Carbonio SOAP fault — %s", reason)
+                return None
+            name = data.get("Body", {}).get("GetInfoResponse", {}).get("name")
+            if name:
+                log.debug("token validation: OK, account=%s", name)
+            else:
+                log.warning("token validation: unexpected SOAP response structure: %s", list(data.get("Body", {}).keys()))
+            return name
+    except urllib.error.HTTPError as exc:
+        body = exc.read(512).decode(errors="replace")
+        log.warning("token validation: HTTP %s from %s — %s", exc.code, soap_url, body)
+        return None
     except Exception as exc:
-        log.warning("Carbonio token validation failed: %s", exc)
+        log.warning("token validation: request to %s failed — %s", soap_url, exc)
         return None
 
 # Route patterns
@@ -286,18 +303,30 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         Returns authenticated account email on success, or sends 401 and
         returns None on failure.
         """
+        client_ip = self.client_address[0]
+        origin    = self.headers.get("Origin", "")
+        host      = self.headers.get("Host", "")
+        log.info("auth: client=%s host=%r origin=%r email=%r", client_ip, host, origin, request_email)
+
         carbonio_url = _cfg.get("carbonio_url", "").strip()
         if not carbonio_url:
-            log.debug("auth disabled (carbonio_url not configured) — allowing request for %s", request_email)
+            log.warning(
+                "auth DISABLED — carbonio_url not set in config.json; "
+                "set it to e.g. 'http://127.0.0.1:8080' to enable token validation. "
+                "Request from client=%s origin=%r will be allowed without authentication.",
+                client_ip, origin,
+            )
             return request_email
 
         token = self.headers.get("X-Auth-Token", "").strip()
         if not token:
+            log.warning("auth: missing X-Auth-Token from client=%s origin=%r", client_ip, origin)
             self._send_json(401, {"error": "missing X-Auth-Token"})
             return None
 
         account = _validate_carbonio_token(token, carbonio_url)
         if account is None:
+            log.warning("auth: invalid token from client=%s origin=%r", client_ip, origin)
             self._send_json(401, {"error": "invalid or expired auth token"})
             return None
         return account
@@ -363,6 +392,12 @@ def main():
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
+
+    carbonio_url = config.get("carbonio_url", "").strip()
+    if not carbonio_url:
+        log.warning("*** AUTH DISABLED *** carbonio_url is empty — /api/publish and /api/revoke accept requests without token validation")
+    else:
+        log.info("Carbonio auth URL: %s", carbonio_url)
 
     log.info("encedo-wkd %s listening on %s:%s", VERSION, host, port)
     server.serve_forever()
