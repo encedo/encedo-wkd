@@ -101,6 +101,16 @@ def setup_logging(log_file: str, log_level: str) -> None:
 
 class WKDHandler(http.server.BaseHTTPRequestHandler):
 
+    # ------------------------------------------------------------------ HEAD
+
+    def do_HEAD(self):
+        """HEAD — same routing as GET, but response body is suppressed (RFC 9110 §9.3.2)."""
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
+
     # ------------------------------------------------------------------ GET
 
     def do_GET(self):
@@ -133,7 +143,7 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -183,7 +193,8 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(data)
+        if not getattr(self, '_head_only', False):
+            self.wfile.write(data)
 
     def _serve_policy(self) -> None:
         self.send_response(200)
