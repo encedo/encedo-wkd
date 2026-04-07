@@ -323,21 +323,20 @@ WKD_CONFIG="${WKD_CONFIG_DIR}/config.json"
 WKD_CACHE_DIR="/var/encedo-wkd/cache"
 WKD_LOG_FILE="/var/log/encedo-wkd.log"
 WKD_LOG_LEVEL="INFO"
-WKD_CARBONIO_URL="http://127.0.0.1:8080"
-
 # Create directories
 mkdir -p "$WKD_CONFIG_DIR"
 mkdir -p "$WKD_CACHE_DIR"
 
 # Generate JSON config
+# carbonio_url intentionally omitted — auth disabled (Phase 1).
+# Access to /api/publish and /api/revoke is restricted at the nginx level.
 cat > "$WKD_CONFIG" << JSON_CONFIG
 {
   "port": ${WKD_PORT},
   "host": "127.0.0.1",
   "cache_dir": "${WKD_CACHE_DIR}",
   "log_file": "${WKD_LOG_FILE}",
-  "log_level": "${WKD_LOG_LEVEL}",
-  "carbonio_url": "${WKD_CARBONIO_URL}"
+  "log_level": "${WKD_LOG_LEVEL}"
 }
 JSON_CONFIG
 
