@@ -375,6 +375,10 @@ fi
 echo ">>> Reloading nginx (nginx -s reload)..."
 su - zextras -c "$NGINX_BIN -s reload -c $NGINX_CONF"
 
+# nginx workers run as 'nobody' and may reset ownership of temp dirs.
+# Restore correct ownership so Carbonio proxy buffering keeps working.
+chown -R zextras:zextras /opt/zextras/data/tmp/nginx/
+
 # ---------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------
