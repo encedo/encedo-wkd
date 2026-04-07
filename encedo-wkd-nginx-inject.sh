@@ -361,7 +361,7 @@ echo "OK:   Cache directory: $WKD_CACHE_DIR"
 
 echo ""
 echo ">>> Testing nginx config..."
-"$NGINX_BIN" -t -c "$NGINX_CONF"
+su - zextras -c "$NGINX_BIN -t -c $NGINX_CONF"
 if [ $? -ne 0 ]; then
     echo "ERROR: nginx config invalid -- reverting"
     > "$TARGET"
@@ -373,7 +373,7 @@ fi
 # Reload nginx (direct reload -- no template regeneration)
 # ---------------------------------------------------------------
 echo ">>> Reloading nginx (nginx -s reload)..."
-"$NGINX_BIN" -s reload -c "$NGINX_CONF"
+su - zextras -c "$NGINX_BIN -s reload -c $NGINX_CONF"
 
 # ---------------------------------------------------------------
 # Summary
