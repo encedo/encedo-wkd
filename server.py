@@ -320,9 +320,19 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             )
             return request_email
 
+        # Accept token from X-Auth-Token header or ZM_AUTH_TOKEN cookie.
+        # ZM_AUTH_TOKEN is HttpOnly in Carbonio — JS cannot read it, but the
+        # browser sends it automatically; we extract it server-side.
         token = self.headers.get("X-Auth-Token", "").strip()
         if not token:
-            log.warning("auth: missing X-Auth-Token from client=%s origin=%r", client_ip, origin)
+            cookie_hdr = self.headers.get("Cookie", "")
+            for part in cookie_hdr.split(";"):
+                name, _, val = part.strip().partition("=")
+                if name.strip() == "ZM_AUTH_TOKEN":
+                    token = val.strip()
+                    break
+        if not token:
+            log.warning("auth: missing X-Auth-Token / ZM_AUTH_TOKEN cookie from client=%s origin=%r", client_ip, origin)
             self._send_json(401, {"error": "missing X-Auth-Token"})
             return None
 

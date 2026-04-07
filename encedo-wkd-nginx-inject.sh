@@ -328,15 +328,14 @@ mkdir -p "$WKD_CONFIG_DIR"
 mkdir -p "$WKD_CACHE_DIR"
 
 # Generate JSON config
-# carbonio_url intentionally omitted — auth disabled (Phase 1).
-# Access to /api/publish and /api/revoke is restricted at the nginx level.
 cat > "$WKD_CONFIG" << JSON_CONFIG
 {
   "port": ${WKD_PORT},
   "host": "127.0.0.1",
   "cache_dir": "${WKD_CACHE_DIR}",
   "log_file": "${WKD_LOG_FILE}",
-  "log_level": "${WKD_LOG_LEVEL}"
+  "log_level": "${WKD_LOG_LEVEL}",
+  "carbonio_url": "http://127.0.0.1:8080"
 }
 JSON_CONFIG
 
