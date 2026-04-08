@@ -41,6 +41,7 @@ chown -R www-data:www-data "$WKD_DIR"
 chmod 750 "$WKD_DIR"
 chmod 640 "$WKD_DIR/config.json"
 chmod 644 "$WKD_DIR"/*.py
+chmod 755 "$WKD_DIR/wkd_cli.py"
 find "$WKD_DIR/auth" -name "*.py" -exec chmod 644 {} \;
 chown -R www-data:www-data "$CACHE_DIR"
 chmod 755 "$CACHE_DIR"
