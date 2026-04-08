@@ -14,74 +14,23 @@ import signal
 import socketserver
 import sys
 import threading
-import urllib.request
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import config as cfg
 import store
+from auth import load_backend
 from wkd import wkd_hash, extract_domain, extract_uids
 
 VERSION = "1.0.0"
 
 _cfg = {}
+_auth = None  # AuthBackend instance
 
 log = logging.getLogger(__name__)
 
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-
-
-def _validate_carbonio_token(token: str, carbonio_url: str) -> str | None:
-    """Validate a Carbonio auth token via SOAP GetInfoRequest.
-
-    Returns the authenticated account email address on success, or None
-    if the token is invalid, expired, or the request fails.
-    """
-    soap_url = f"{carbonio_url}/service/soap/GetInfoRequest"
-    log.debug("token validation: POST %s (token prefix: %s…)", soap_url, token[:12] if token else "(empty)")
-
-    soap_body = json.dumps({
-        "Header": {
-            "context": {
-                "_jsns": "urn:zimbra",
-                "authToken": {"_content": token},
-            }
-        },
-        "Body": {
-            "GetInfoRequest": {
-                "_jsns": "urn:zimbraAccount",
-                "sections": "mbox",
-            }
-        },
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        soap_url,
-        data=soap_body,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-            fault = data.get("Body", {}).get("Fault")
-            if fault:
-                reason = fault.get("Reason", {}).get("Text", "unknown fault")
-                log.warning("token validation: Carbonio SOAP fault — %s", reason)
-                return None
-            name = data.get("Body", {}).get("GetInfoResponse", {}).get("name")
-            if name:
-                log.debug("token validation: OK, account=%s", name)
-            else:
-                log.warning("token validation: unexpected SOAP response structure: %s", list(data.get("Body", {}).keys()))
-            return name
-    except urllib.error.HTTPError as exc:
-        body = exc.read(512).decode(errors="replace")
-        log.warning("token validation: HTTP %s from %s — %s", exc.code, soap_url, body)
-        return None
-    except Exception as exc:
-        log.warning("token validation: request to %s failed — %s", soap_url, exc)
-        return None
 
 # Route patterns
 # Advanced method:  /.well-known/openpgpkey/<domain>/hu/<hash>
@@ -237,13 +186,12 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "missing pubkey_base64"})
             return
 
-        account = self._require_auth(email)
+        account, all_emails = self._require_auth(email)
         if account is None:
             return
 
-        # User may only publish their own key
-        if email != account:
-            self._send_json(403, {"error": "forbidden: email does not match authenticated account"})
+        if email not in all_emails:
+            self._send_json(403, {"error": "forbidden: email does not match authenticated account or its aliases"})
             return
 
         try:
@@ -252,7 +200,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid base64"})
             return
 
-        # Validate that the key contains a UID matching the requested email
         uids = extract_uids(pubkey_bytes)
         if not any(email in uid.lower() for uid in uids):
             log.warning("publish rejected: no UID matching %s in key (uids=%r)", email, uids)
@@ -275,20 +222,19 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid email"})
             return
 
-        account = self._require_auth(email)
+        account, all_emails = self._require_auth(email)
         if account is None:
             return
 
-        # User may only revoke their own key
-        if email != account:
-            self._send_json(403, {"error": "forbidden: email does not match authenticated account"})
+        if email not in all_emails:
+            self._send_json(403, {"error": "forbidden: email does not match authenticated account or its aliases"})
             return
 
         local, domain = email.split("@", 1)
         hash_ = wkd_hash(local)
         deleted = store.delete_key(domain, hash_)
         if not deleted:
-            log.info("revoke: key not found in WKD for %s (hash=%s) — returning 404 (expected if key was never published)", email, hash_)
+            log.info("revoke: key not found for %s (hash=%s)", email, hash_)
             self._send_json(404, {"error": "key not found"})
             return
         log.info("revoked key for %s (hash=%s)", email, hash_)
@@ -296,52 +242,26 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- helpers
 
-    def _require_auth(self, request_email: str = "") -> str | None:
-        """Validate X-Auth-Token via Carbonio SOAP GetInfoRequest.
+    def _require_auth(self, request_email: str = "") -> tuple[str, set[str]] | tuple[None, None]:
+        """Delegate authentication to the configured auth backend.
 
-        If carbonio_url is not set in config, auth is disabled and the
-        request_email is returned as-is (unauthenticated / local mode).
-
-        Returns authenticated account email on success, or sends 401 and
-        returns None on failure.
+        Returns (account, all_emails) on success, or sends 401 and returns
+        (None, None) on failure.
         """
         client_ip = self.client_address[0]
         origin    = self.headers.get("Origin", "")
         host      = self.headers.get("Host", "")
         log.info("auth: client=%s host=%r origin=%r email=%r", client_ip, host, origin, request_email)
 
-        carbonio_url = _cfg.get("carbonio_url", "").strip()
-        if not carbonio_url:
-            log.warning(
-                "auth DISABLED — carbonio_url not set in config.json; "
-                "set it to e.g. 'http://127.0.0.1:8080' to enable token validation. "
-                "Request from client=%s origin=%r will be allowed without authentication.",
-                client_ip, origin,
-            )
-            return request_email
+        # Attach client_ip for backends that want to log it
+        self.headers._client_ip = client_ip
 
-        # Accept token from X-Auth-Token header or ZM_AUTH_TOKEN cookie.
-        # ZM_AUTH_TOKEN is HttpOnly in Carbonio — JS cannot read it, but the
-        # browser sends it automatically; we extract it server-side.
-        token = self.headers.get("X-Auth-Token", "").strip()
-        if not token:
-            cookie_hdr = self.headers.get("Cookie", "")
-            for part in cookie_hdr.split(";"):
-                name, _, val = part.strip().partition("=")
-                if name.strip() == "ZM_AUTH_TOKEN":
-                    token = val.strip()
-                    break
-        if not token:
-            log.warning("auth: missing X-Auth-Token / ZM_AUTH_TOKEN cookie from client=%s origin=%r", client_ip, origin)
-            self._send_json(401, {"error": "missing X-Auth-Token"})
-            return None
-
-        account = _validate_carbonio_token(token, carbonio_url)
+        account, all_emails = _auth.authenticate(self.headers, request_email)
         if account is None:
-            log.warning("auth: invalid token from client=%s origin=%r", client_ip, origin)
-            self._send_json(401, {"error": "invalid or expired auth token"})
-            return None
-        return account
+            log.warning("auth: rejected from client=%s origin=%r", client_ip, origin)
+            self._send_json(401, _auth.error_response())
+            return None, None
+        return account, all_emails
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -387,8 +307,9 @@ def main():
         config.get("log_level", "INFO"),
     )
 
-    global _cfg
+    global _cfg, _auth
     _cfg = config
+    _auth = load_backend(config)
 
     store.init(config["cache_dir"])
 
@@ -405,13 +326,7 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
-    carbonio_url = config.get("carbonio_url", "").strip()
-    if not carbonio_url:
-        log.warning("*** AUTH DISABLED *** carbonio_url is empty — /api/publish and /api/revoke accept requests without token validation")
-    else:
-        log.info("Carbonio auth URL: %s", carbonio_url)
-
-    log.info("encedo-wkd %s listening on %s:%s", VERSION, host, port)
+    log.info("encedo-wkd %s listening on %s:%s (auth=%s)", VERSION, host, port, _auth.__class__.__name__)
     server.serve_forever()
     log.info("Server stopped.")
 

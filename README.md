@@ -4,13 +4,14 @@ WKD (Web Key Directory, [RFC draft](https://datatracker.ietf.org/doc/draft-koch-
 server for Encedo Mail. Allows GPG, ProtonMail, Thunderbird and other OpenPGP-capable clients
 to automatically discover and use public keys for recipients on your domain.
 
-Part of the **Encedo Mail** project (Phase 1).
+Part of **Encedo Mail**. See [ARCH.md](../ARCH.md) for full system architecture.
 
 ---
 
 ## Requirements
 
 - Python 3.10+ (stdlib only — no pip, no external packages)
+- nginx (Carbonio's nginx on production)
 
 ---
 
@@ -19,36 +20,18 @@ Part of the **Encedo Mail** project (Phase 1).
 Run as **root** on the Carbonio server:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/encedo/encedo-wkd
-cd encedo-wkd
-
-# 2. Install service, nginx extensions, systemd unit
 sudo ./install.sh
-
-# 3. Generate nginx config + TLS certs for openpgpkey.* domains
-#    (reads domain list from Carbonio via zmprov, requests Let's Encrypt certs,
-#     writes nginx WKD server blocks, generates config.json, reloads nginx)
-sudo bash encedo-wkd-nginx-inject.sh
-
-# 4. Start the service
+sudo bash encedo-wkd-nginx-inject.sh   # generates nginx config + TLS certs
 sudo systemctl start encedo-wkd
-sudo systemctl status encedo-wkd
-
-# 5. Smoke test
-curl https://openpgpkey.<your-domain>/.well-known/openpgpkey/policy
 ```
 
-> **Note:** `encedo-wkd-nginx-inject.sh` must be run with `bash` (or `chmod +x` first) —
-> it uses `bash`-specific syntax (`set -euo pipefail`, process substitution).
-> Re-run it after adding a new domain or after a Carbonio upgrade.
+Re-run `encedo-wkd-nginx-inject.sh` after adding a new domain or after a Carbonio upgrade.
 
-### Update existing installation
+### Update
 
 ```bash
-cd encedo-wkd
 git pull
-sudo ./install.sh          # updates Python files + nginx extensions + reloads nginx
+sudo ./install.sh
 sudo systemctl restart encedo-wkd
 ```
 
@@ -56,161 +39,109 @@ sudo systemctl restart encedo-wkd
 
 ## Configuration (config.json)
 
-| Field         | Required | Default                    | Description                                          |
-|---------------|----------|----------------------------|------------------------------------------------------|
-| `port`        | yes      | —                          | Listening port (e.g. `8089`)                         |
-| `host`        | no       | `127.0.0.1`                | Bind address                                         |
-| `cache_dir`   | yes      | —                          | Key storage directory                                |
-| `log_file`    | no       | `/var/log/encedo-wkd.log`  | Log file path                                        |
-| `log_level`   | no       | `INFO`                     | Logging verbosity (`DEBUG`, `INFO`, `WARNING`)       |
-| `carbonio_url`| no       | `""` (disabled)            | Carbonio internal URL for token validation — set to `http://127.0.0.1:8080` on Carbonio server; leave empty for standalone/local mode (no auth) |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `port` | yes | — | Listening port (8089) |
+| `host` | no | `127.0.0.1` | Bind address |
+| `cache_dir` | yes | — | Key storage directory |
+| `log_file` | no | `/var/log/encedo-wkd.log` | Log file |
+| `log_level` | no | `INFO` | Verbosity |
+| `auth_backend` | no | auto | `"carbonio"` or `"none"` (auto-detected from `carbonio_url`) |
+| `carbonio_url` | no | `""` | Required when `auth_backend=carbonio`. Set to `http://127.0.0.1:8080` in production. |
 
-Path to config file is set via `WKD_CONFIG` env var (default: `/opt/encedo-wkd/config.json`).
+Config path via `WKD_CONFIG` env var (default: `/opt/encedo-wkd/config.json`).
 
-**Production example** (Carbonio server):
-```json
-{
-  "port": 8089,
-  "host": "127.0.0.1",
-  "cache_dir": "/var/encedo-wkd/cache",
-  "log_file": "/var/log/encedo-wkd.log",
-  "log_level": "INFO",
-  "carbonio_url": "http://127.0.0.1:8080"
-}
+### Auth backends
+
+| Backend | When to use |
+|---------|-------------|
+| `carbonio` | Integrated with Carbonio/Zextras mail server — validates session tokens via SOAP |
+| `none` | Standalone / local-only — port not exposed externally, keys managed via `wkd-cli` |
+
+To implement a custom backend (e.g. LDAP, Keycloak): subclass `AuthBackend` in `auth/` and register it in `auth/__init__.py:load_backend()`.
+
+---
+
+## API
+
+### Authentication
+
+**Production** (`auth_backend=carbonio`):
+- `X-Auth-Token` header required (Carbonio session token)
+- Token validated against Carbonio SOAP `GetInfoRequest`
+- Also accepted from `Cookie: ZM_AUTH_TOKEN=...` (ZM_AUTH_TOKEN is HttpOnly — JS can't read it)
+- Token email must match the `email` field or one of the account's aliases
+
+**Standalone** (`auth_backend=none`): no auth required. Port 8089 not exposed externally.
+
+### CLI (no server required)
+
+```bash
+# Publish a key directly (admin, local)
+python3 wkd_cli.py publish --email jan@firma.pl --key /path/to/pub.asc
+
+# Revoke
+python3 wkd_cli.py revoke --email jan@firma.pl
+
+# List all keys
+python3 wkd_cli.py list [--domain firma.pl]
+
+# Show key details
+python3 wkd_cli.py show --email jan@firma.pl
+
+# Print WKD hash for an email
+python3 wkd_cli.py hash --email jan@firma.pl
 ```
 
-**Standalone / local test** (no auth):
-```json
-{
-  "port": 8089,
-  "host": "127.0.0.1",
-  "cache_dir": "/var/encedo-wkd/cache",
-  "carbonio_url": ""
-}
+### Publish a key
+
+```bash
+gpg --export jan@firma.pl | base64 -w0 > /tmp/pubkey.b64
+
+# Production (via Carbonio proxy):
+curl -X POST https://mailserver.encedo.com/wkd/api/publish \
+  -H "Content-Type: application/json" \
+  -H "X-Auth-Token: $TOKEN" \
+  -d "{\"email\":\"jan@firma.pl\",\"pubkey_base64\":\"$(cat /tmp/pubkey.b64)\"}"
+
+# Standalone / local:
+curl -X POST http://127.0.0.1:8089/api/publish \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"jan@firma.pl\",\"pubkey_base64\":\"$(cat /tmp/pubkey.b64)\"}"
+```
+
+Server validates that the submitted key contains a User ID matching the requested email.
+
+### Revoke a key
+
+```bash
+curl -X DELETE https://mailserver.encedo.com/wkd/api/revoke \
+  -H "Content-Type: application/json" \
+  -H "X-Auth-Token: $TOKEN" \
+  -d '{"email":"jan@firma.pl"}'
+```
+
+### Verify key is published
+
+```bash
+# Via GPG (tries advanced then direct method):
+gpg --locate-key jan@firma.pl
+
+# Via curl:
+HASH=$(python3 -c "from wkd import wkd_hash; print(wkd_hash('jan'))")
+curl "https://openpgpkey.firma.pl/.well-known/openpgpkey/firma.pl/hu/${HASH}?l=jan" | wc -c
 ```
 
 ---
 
 ## nginx setup
 
-`install.sh` automatically deploys two files to `/opt/zextras/conf/nginx/extensions/`
-and reloads nginx — no manual steps needed:
+`install.sh` deploys nginx extension files to `/opt/zextras/conf/nginx/extensions/`:
 
 | File | Purpose |
 |------|---------|
 | `upstream-wkd.conf` | upstream `wkd_server` → `127.0.0.1:8089` |
 | `backend-wkd.conf` | `location /wkd/` proxy inside main Carbonio `server{}` block |
 
-This exposes the publish/revoke API at `https://<carbonio-domain>/wkd/api/...`.
-
-The `openpgpkey.*` virtual hosts (for WKD public key lookup) are generated separately
-by `encedo-wkd-nginx-inject.sh`.
-
----
-
-## API
-
-### Key validation
-
-On every publish request the server parses the submitted binary OpenPGP key and checks
-that at least one **User ID packet** (tag 13, RFC 4880 §5.11) contains the requested email
-address. The check is case-insensitive and accepts both `Name <email>` and bare `email` forms.
-
-This prevents a user from publishing a key with someone else's email (alice publishing bob's key).
-The parser handles both v4 (old-format and new-format packets) and v6 keys (new-format only, RFC 9580).
-
-Returns `400` with `{"error": "key does not contain a User ID matching the requested email"}`
-if validation fails.
-
----
-
-### Authentication modes
-
-**With Carbonio** (`carbonio_url` set in `config.json`):
-- `X-Auth-Token` header required — Carbonio session token
-- `server.py` validates the token against Carbonio SOAP `GetInfoRequest` (internal `http://127.0.0.1:8080`)
-- Token email must match the `email` field in the request body
-- Intended for production use via nginx proxy (`https://<carbonio-domain>/wkd/api/...`)
-
-**Standalone / local** (`carbonio_url` empty or absent in `config.json`):
-- No `X-Auth-Token` required
-- Any email can be published/revoked — no ownership check
-- Direct access to `http://127.0.0.1:8089` only (port not exposed externally)
-- Intended for testing and standalone deployments
-
-### Generate a GPG key (if you don't have one yet)
-
-```bash
-gpg --batch --gen-key <<EOF
-Key-Type: EdDSA
-Key-Curve: ed25519
-Subkey-Type: ECDH
-Subkey-Curve: cv25519
-Name-Real: Jan Kowalski
-Name-Email: jan@firma.pl
-Expire-Date: 2y
-%no-protection
-EOF
-```
-
-### Publish a key
-
-```bash
-# Standalone / local (no auth):
-gpg --export jan@firma.pl | base64 -w0 > /tmp/pubkey.b64
-curl -s -X POST http://127.0.0.1:8089/api/publish \
-  -H "Content-Type: application/json" \
-  -d "{\"email\":\"jan@firma.pl\",\"pubkey_base64\":\"$(cat /tmp/pubkey.b64)\"}"
-# Expected: {"ok": true, "hash": "<wkd_hash>"}
-
-# Production via Carbonio proxy (requires X-Auth-Token):
-TOKEN=<carbonio_session_token>
-curl -s -X POST https://mailserver.encedo.com/wkd/api/publish \
-  -H "Content-Type: application/json" \
-  -H "X-Auth-Token: $TOKEN" \
-  -d "{\"email\":\"jan@firma.pl\",\"pubkey_base64\":\"$(cat /tmp/pubkey.b64)\"}"
-```
-
-### Verify key was published
-
-```bash
-# Compute WKD hash for the local part of the email:
-python3 -c "from wkd import wkd_hash; print(wkd_hash('jan'))"
-# e.g. -> ow4s9up8g96bch3i8yqbuxmwxfzx5sfw
-
-# WKD lookup — advanced method:
-HASH=$(python3 -c "from wkd import wkd_hash; print(wkd_hash('jan'))")
-curl -s "https://openpgpkey.firma.pl/.well-known/openpgpkey/firma.pl/hu/${HASH}?l=jan" | wc -c
-
-# Or via GPG (tries advanced then direct method automatically):
-gpg --locate-key jan@firma.pl
-
-# Online tester: https://wkd.chimbosonic.com
-```
-
-### Revoke a key
-
-```bash
-# Standalone / local (no auth):
-curl -s -X DELETE http://127.0.0.1:8089/api/revoke \
-  -H "Content-Type: application/json" \
-  -d '{"email":"jan@firma.pl"}'
-# Expected: {"ok": true}
-# After revoke, WKD lookup returns 404.
-
-# Production via Carbonio proxy:
-curl -s -X DELETE https://mailserver.encedo.com/wkd/api/revoke \
-  -H "Content-Type: application/json" \
-  -H "X-Auth-Token: $TOKEN" \
-  -d '{"email":"jan@firma.pl"}'
-```
-
----
-
-## Rollback
-
-```bash
-systemctl stop encedo-wkd
-systemctl disable encedo-wkd
-# nginx: remove the location block added for this service
-```
+`encedo-wkd-nginx-inject.sh` generates `openpgpkey.*` virtual hosts with Let's Encrypt certs.
+Uses `listen <IP>:443` (specific IP, not `*:443`) to share the socket with Carbonio's `default_server`.
