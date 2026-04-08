@@ -26,6 +26,7 @@ echo "[1/6] Creating directories..."
 mkdir -p "$WKD_DIR"
 mkdir -p "$CACHE_DIR"
 cp ./*.py "$WKD_DIR/"
+cp -r auth "$WKD_DIR/"
 
 echo "[2/6] Installing config.json (if not present)..."
 if [ ! -f "$WKD_DIR/config.json" ]; then
@@ -40,6 +41,7 @@ chown -R www-data:www-data "$WKD_DIR"
 chmod 750 "$WKD_DIR"
 chmod 640 "$WKD_DIR/config.json"
 chmod 644 "$WKD_DIR"/*.py
+find "$WKD_DIR/auth" -name "*.py" -exec chmod 644 {} \;
 chown -R www-data:www-data "$CACHE_DIR"
 chmod 755 "$CACHE_DIR"
 
