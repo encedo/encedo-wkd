@@ -53,7 +53,7 @@ class CarbonicAuthBackend(AuthBackend):
 
     def _validate_token(self, token: str) -> tuple[str, set[str]] | tuple[None, None]:
         soap_url = f"{self.carbonio_url}/service/soap/GetInfoRequest"
-        log.debug("token validation: POST %s (token prefix: %s…)", soap_url, token[:12] if token else "(empty)")
+        log.debug("token validation: POST %s (token len=%d)", soap_url, len(token) if token else 0)
 
         soap_body = json.dumps({
             "Header": {

@@ -25,6 +25,11 @@ from wkd import wkd_hash, extract_domain, extract_uids
 
 VERSION = "1.0.0"
 
+# Cap request bodies. A published key here is an Ed25519+X25519 cert (~1 KB raw,
+# ~1.4 KB base64); 16 KiB leaves room for extra signatures and is still far below
+# anything worth calling a payload. Checked before the body is read into memory.
+MAX_BODY_BYTES = 16 * 1024
+
 _cfg = {}
 _auth = None  # AuthBackend instance
 
@@ -172,6 +177,8 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- API handlers
 
     def _handle_publish(self) -> None:
+        if not self._csrf_ok():
+            return
         body = self._read_json()
         if body is None:
             return
@@ -213,6 +220,8 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "hash": hash_})
 
     def _handle_revoke(self) -> None:
+        if not self._csrf_ok():
+            return
         body = self._read_json()
         if body is None:
             return
@@ -242,6 +251,34 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- helpers
 
+    def _csrf_ok(self) -> bool:
+        """Reject cross-origin browser requests to state-changing endpoints.
+
+        Auth on publish/revoke rides on the ZM_AUTH_TOKEN cookie, which the
+        browser attaches automatically — so a foreign page could drive a
+        publish/revoke as the logged-in victim (CSRF). Browsers always send an
+        Origin header on cross-origin POST/DELETE, so we require it to match the
+        request Host (or an explicit allow-list). Non-browser clients (wkd-cli,
+        server-to-server) send no Origin and are unaffected.
+        """
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True
+
+        allowed = _cfg.get("allowed_origins")
+        if allowed:
+            if origin in allowed:
+                return True
+        else:
+            origin_host = urlparse(origin).netloc
+            if origin_host and origin_host == self.headers.get("Host", ""):
+                return True
+
+        log.warning("csrf: rejected cross-origin request origin=%r host=%r from client=%s",
+                    origin, self.headers.get("Host", ""), self.client_address[0])
+        self._send_json(403, {"error": "cross-origin request rejected"})
+        return False
+
     def _require_auth(self, request_email: str = "") -> tuple[str, set[str]] | tuple[None, None]:
         """Delegate authentication to the configured auth backend.
 
@@ -264,9 +301,16 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         return account, all_emails
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._send_json(400, {"error": "invalid Content-Length"})
+            return None
+        if length <= 0:
             self._send_json(400, {"error": "empty body"})
+            return None
+        if length > MAX_BODY_BYTES:
+            self._send_json(413, {"error": "request body too large"})
             return None
         try:
             return json.loads(self.rfile.read(length))

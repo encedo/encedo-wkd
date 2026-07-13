@@ -31,6 +31,22 @@ Last updated: 2026-04-08
 
 ---
 
+## Security hardening (2026-07-13)
+
+Audit fixes applied in code — **note the operational step for already-deployed servers**:
+
+- **CSRF on publish/revoke** — `server.py` now rejects cross-origin browser requests
+  (Origin must match Host, or be in optional `allowed_origins` config). Cookie auth is kept;
+  the Origin check is what stops a foreign page from publishing a key as the logged-in user.
+  Legit publish is same-origin (`https://<webmail>/wkd/api/...`) so it is unaffected.
+- **TLS privkey 640 root:zextras** — `encedo-wkd-nginx-inject.sh` no longer sets `644`.
+  ⚠ **Already-deployed keys stay 644 until inject.sh reruns.** Remediate now:
+  `find /opt/zextras/common/certbot/etc/letsencrypt/live -name privkey.pem -exec chmod 640 {} \;`
+- **Request body cap** — 16 KiB, checked before the body is read (DoS guard).
+  Published keys are ~1.4 KB base64, so the cap is deliberately tight.
+- **`store.put_key` path validation** — writer now goes through the same domain/hash regex
+  guard as read/delete.
+
 ## nginx Architecture
 
 Carbonio nginx (`/opt/zextras/common/sbin/nginx`):

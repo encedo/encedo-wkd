@@ -121,9 +121,13 @@ if [ -n "$CERTS_TO_REQUEST" ]; then
     for SUBDOMAIN in $CERTS_TO_REQUEST; do
         PRIVKEY_PATH="${CERTBOT_ROOT}/live/${SUBDOMAIN}/privkey.pem"
         if [ -f "$PRIVKEY_PATH" ]; then
-            chmod 644 "$PRIVKEY_PATH"
-            chown root:zextras "$PRIVKEY_PATH" 2>/dev/null || true
-            echo "OK:   $SUBDOMAIN -- privkey permissions fixed"
+            # nginx runs as zextras and reads the key via the group; nothing else
+            # should. 640 root:zextras — never world-readable.
+            if ! chown root:zextras "$PRIVKEY_PATH"; then
+                echo "WARN: $SUBDOMAIN -- could not chown privkey to root:zextras; nginx may fail to read it"
+            fi
+            chmod 640 "$PRIVKEY_PATH"
+            echo "OK:   $SUBDOMAIN -- privkey permissions fixed (640 root:zextras)"
         fi
     done
 fi

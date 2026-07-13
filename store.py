@@ -35,9 +35,10 @@ def get_key(domain: str, hash_: str) -> bytes | None:
 
 
 def put_key(domain: str, hash_: str, pubkey_bytes: bytes) -> None:
-    dir_ = os.path.join(_cache_dir, domain)
-    os.makedirs(dir_, exist_ok=True)
-    path = os.path.join(dir_, hash_)
+    # Validate domain/hash the same way as get/delete — this is the only writer,
+    # so it must not be the one path that skips the traversal guard.
+    path = _key_path(domain, hash_)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'wb') as f:
         f.write(pubkey_bytes)
     log.info("stored key for domain=%s hash=%s (%d bytes)", domain, hash_, len(pubkey_bytes))
