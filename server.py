@@ -72,6 +72,13 @@ def setup_logging(log_file: str, log_level: str) -> None:
 
 class WKDHandler(http.server.BaseHTTPRequestHandler):
 
+    def end_headers(self):
+        # Send CORS on EVERY response — including 404 — so browsers can read the result
+        # instead of logging a "CORS Missing Allow Origin" error on a not-found lookup.
+        # Centralised here so no path can forget it (and no duplicate header is emitted).
+        self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
     # ------------------------------------------------------------------ HEAD
 
     def do_HEAD(self):
@@ -113,7 +120,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token")
         self.send_header("Content-Length", "0")
@@ -162,7 +168,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         if not getattr(self, '_head_only', False):
             self.wfile.write(data)
@@ -171,7 +176,6 @@ class WKDHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")  # RFC WKD §4.3
         self.send_header("Content-Length", "0")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
     # ---------------------------------------------------------------- API handlers
